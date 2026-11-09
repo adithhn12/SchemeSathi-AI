@@ -163,7 +163,3 @@ Developed as a hackathon project by the SchemeSathi team.
 This project is intended for educational and hackathon purposes.
 
 ---
-
-## 📄 License
-
-No software license is currently included in this repository. The scheme dataset has its own upstream source and license terms; see the dataset page linked above. Add a repository `LICENSE` file before granting reuse rights for this project's code.
