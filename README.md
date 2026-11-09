@@ -1,8 +1,7 @@
-# 🇮🇳 SchemeSathi AI
+# SchemeSathi AI
 
 SchemeSathi AI is a Telegram bot that helps people explore Indian Central and State government benefit schemes. Users can build a profile, browse relevant schemes, review structured eligibility checks, and keep a household document-readiness checklist.
 
-🔗 **GitHub:** https://github.com/adithhn12/SchemeSathi-AI  
 🤖 **Platform:** Telegram (run your own bot with a Telegram Bot API token)
 
 ---
@@ -157,7 +156,11 @@ Eligibility checks only use structured conditions the dataset provides and a lim
 
 ## 👥 Team
 
-Developed as an educational and hackathon project by the SchemeSathi team.
+Developed as a hackathon project by the SchemeSathi team.
+
+## 📄 License
+
+This project is intended for educational and hackathon purposes.
 
 ---
 
