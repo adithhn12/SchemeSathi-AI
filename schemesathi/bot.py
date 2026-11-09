@@ -17,7 +17,8 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from .data import load_schemes
 from .eligibility import EligibilityResult, evaluate_eligibility
 from .extraction import extract_profile_details
-from .ml import INTENT_MODEL_PATH, SchemeRecommender, classify_intent
+from .i18n import LANGUAGES, LANGUAGE_NAMES, translate
+from .ml import SchemeRecommender, classify_intent
 from .storage import Store
 
 
@@ -30,6 +31,8 @@ PROFILE_FIELDS = (
     "state",
     "residence",
     "gender",
+    "disability",
+    "bpl",
     "social_category",
 )
 SOCIAL_CATEGORIES = (
@@ -42,6 +45,7 @@ SOCIAL_CATEGORIES = (
     "Other",
     "Prefer not to say",
 )
+DOCUMENTS_PER_PAGE = 4
 NAVIGATION_ACTIONS = frozenset(
     {
         "home",
@@ -59,6 +63,7 @@ NAVIGATION_ACTIONS = frozenset(
         "confirm_delete",
         "family_edit",
         "edit_social_category",
+        "language",
     }
 )
 LEGACY_CALLBACK_ACTIONS = {
@@ -68,41 +73,48 @@ LEGACY_CALLBACK_ACTIONS = {
     "alternative": "alternatives",
     "page": "recommendations_page",
 }
-FIELD_PROMPTS = {
-    "age": "What is your age in years? (or type skip)",
-    "occupation": "What best describes your occupation? (or type skip)",
-    "education": "What is your current or highest education level? (or type skip)",
-    "annual_income": "What is your approximate annual family income in INR? (or type skip)",
-    "state": "Which Indian state or union territory do you live in? (or type skip)",
-    "residence": "Is your residence rural or urban? (or type skip)",
-    "gender": "What gender should I use when checking scheme conditions? (or type skip)",
-    "social_category": (
-        "Optional and sensitive: share a social category only if you want it used to check a "
-        "scheme's listed conditions. It is stored locally, not inferred, and is not your religion. "
-        "Choose a category or skip."
-    ),
-}
-MAIN_MENU = InlineKeyboardMarkup(
-    [
-        [InlineKeyboardButton("Discover schemes", callback_data="nav:discover"),
-         InlineKeyboardButton("Family benefits", callback_data="nav:family")],
-        [InlineKeyboardButton("Life event", callback_data="nav:event"),
-         InlineKeyboardButton("Check eligibility", callback_data="nav:eligibility")],
-        [InlineKeyboardButton("Document checklist", callback_data="nav:documents"),
-         InlineKeyboardButton("Alternatives", callback_data="nav:alternatives")],
-        [InlineKeyboardButton("Compare schemes", callback_data="nav:compare"),
-         InlineKeyboardButton("Ask about a scheme", callback_data="nav:ask")],
-        [InlineKeyboardButton("Edit profile", callback_data="nav:profile"),
-         InlineKeyboardButton("Delete my data", callback_data="nav:delete")],
+def _main_menu(language: str = "en") -> InlineKeyboardMarkup:
+    t = lambda key: translate(language, key)
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(t("menu.discover"), callback_data="nav:discover"),
+             InlineKeyboardButton(t("menu.family"), callback_data="nav:family")],
+            [InlineKeyboardButton(t("menu.event"), callback_data="nav:event"),
+             InlineKeyboardButton(t("menu.eligibility"), callback_data="nav:eligibility")],
+            [InlineKeyboardButton(t("menu.documents"), callback_data="nav:documents"),
+             InlineKeyboardButton(t("menu.alternatives"), callback_data="nav:alternatives")],
+            [InlineKeyboardButton(t("menu.compare"), callback_data="nav:compare"),
+             InlineKeyboardButton(t("menu.ask"), callback_data="nav:ask")],
+            [InlineKeyboardButton(t("menu.profile"), callback_data="nav:profile"),
+             InlineKeyboardButton(t("menu.language"), callback_data="nav:language")],
+            [InlineKeyboardButton(t("menu.delete"), callback_data="nav:delete")],
+        ]
+    )
+
+
+def _language_keyboard(language: str = "en") -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(("✅ " if code == language else "") + name, callback_data=f"language:{code}")]
+        for code, name in LANGUAGE_NAMES.items()
     ]
-)
+    rows.append([InlineKeyboardButton(translate(language, "home"), callback_data="nav:home")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _normalize_menu_text(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", value.casefold(), flags=re.UNICODE)).strip()
+
+
+MAIN_MENU = _main_menu()
 
 
 def _clean_text(value: Any, limit: int = 900) -> str:
     text = html.unescape(str(value or ""))
     text = re.sub(r"<[^>]*>", " ", text)
+    text = re.sub(r"(?m)^\s*>\s?", "", text)
     for marker in ("**", "__", "~~", "`"):
         text = text.replace(marker, "")
+    text = text.replace("*", "")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\s*\n\s*", "\n", text).strip()
     return text[:limit].strip()
@@ -131,12 +143,13 @@ def _profile_ready(profile: dict[str, Any]) -> bool:
     return bool(profile.get("state") and profile.get("occupation"))
 
 
-def _check_label(result: EligibilityResult) -> str:
-    return {
-        "potentially_eligible": "Potential match",
-        "not_matching": "Known condition mismatch",
-        "needs_information": "More details needed",
+def _check_label(result: EligibilityResult, language: str = "en") -> str:
+    key = {
+        "potentially_eligible": "profile.all_pass",
+        "not_matching": "profile.mismatch",
+        "needs_information": "profile.unknown",
     }[result.outcome]
+    return translate(language, key)
 
 
 def _documents_for(scheme: dict[str, Any]) -> list[str]:
@@ -154,31 +167,32 @@ def _documents_for(scheme: dict[str, Any]) -> list[str]:
     return documents[:12]
 
 
-def _scheme_card(item: dict[str, Any]) -> str:
+def _scheme_card(item: dict[str, Any], language: str = "en") -> str:
+    t = lambda key, **values: translate(language, key, **values)
     scheme = item["scheme"]
     eligibility: EligibilityResult = item["eligibility"]
-    if eligibility.outcome == "not_matching":
-        condition_values = eligibility.failed or eligibility.satisfied or eligibility.unknown
-        why = "A known condition differs: " + eligibility.failed[0]
-    elif eligibility.satisfied:
-        condition_values = eligibility.satisfied
-        why = "Your profile matches: " + eligibility.satisfied[0]
-    else:
-        condition_values = eligibility.unknown or eligibility.failed
-        why = "Please confirm: " + (eligibility.unknown[0] if eligibility.unknown else "scheme conditions are incomplete.")
+    source_url = _valid_http_url(scheme.get("official_url"))
+    status = (
+        f"{t('profile.all_pass')} · {t('label.count', count=str(len(eligibility.satisfied)))}"
+        if eligibility.outcome == "potentially_eligible"
+        else t("profile.mismatch") if eligibility.outcome == "not_matching"
+        else t("profile.unknown")
+    )
     lines = [
         f"<b>{_escape(scheme.get('name'), 180)}</b>",
-        f"<i>{_escape(scheme.get('state') or 'All India')} · {_escape(scheme.get('category') or 'Scheme', 100)}</i>",
-        f"Benefit: {_escape(_short_summary(scheme.get('benefits')), 220)}",
-        f"Status: <b>{_escape(_check_label(eligibility), 120)}</b>",
+        f"📍 <i>{_escape(scheme.get('state') or 'All India')} · {_escape(scheme.get('category') or 'Scheme', 100)}</i>",
+        f"💰 {_escape(_short_summary(scheme.get('benefits'), 100), 130)}",
+        status,
     ]
-    if condition_values:
-        lines.append("Key conditions: " + _escape("; ".join(condition_values[:3]), 300))
-    lines.append("Why it may fit: " + _escape(why, 200))
+    if source_url:
+        lines.append(f'<a href="{html.escape(source_url, quote=True)}">{t("source.link")}</a>')
+    else:
+        lines.append(t("source.missing"))
     return "\n".join(lines)
 
 
-def _scheme_details(item: dict[str, Any]) -> str:
+def _scheme_details(item: dict[str, Any], language: str = "en") -> str:
+    t = lambda key: translate(language, key)
     scheme = item["scheme"]
     eligibility: EligibilityResult = item["eligibility"]
     documents = _documents_for(scheme)
@@ -186,71 +200,76 @@ def _scheme_details(item: dict[str, Any]) -> str:
     info_url = _valid_http_url(scheme.get("official_url"))
     lines = [
         f"<b>{_escape(scheme.get('name'), 180)}</b>",
-        f"<b>Benefits</b>\n{_escape(_clean_text(scheme.get('benefits'), 650) or 'Not listed in this dataset.')}",
-        f"<b>Eligibility</b>\n{_escape(_clean_text(scheme.get('eligibility_text'), 700) or 'Not listed in this dataset.')}",
-        f"<b>Your check</b>\n{_escape(_check_label(eligibility))}",
+        f"<b>{t('label.benefits')}</b>\n{_escape(_clean_text(scheme.get('benefits'), 320) or t('label.not_listed'))}",
+        f"<b>{t('label.eligibility')}</b>\n{_escape(_clean_text(scheme.get('eligibility_text'), 420) or t('label.not_listed'))}",
+        f"<b>{t('label.your_check')}</b>\n{_escape(_check_label(eligibility, language))}",
     ]
     if eligibility.unknown:
-        lines.append("<b>Still to check</b>\n" + _escape("; ".join(eligibility.unknown[:4]), 500))
+        lines.append(f"<b>{t('label.still_check')}</b>\n" + _escape("; ".join(eligibility.unknown[:4]), 500))
     if eligibility.failed:
-        lines.append("<b>Conditions that do not match</b>\n" + _escape("; ".join(eligibility.failed[:4]), 500))
-    lines.append("<b>Documents</b>\n" + (_escape("; ".join(documents), 550) if documents else "Not listed in this dataset."))
+        lines.append(f"<b>{t('label.mismatch')}</b>\n" + _escape("; ".join(eligibility.failed[:4]), 500))
+    brief_documents = documents[:6]
+    if len(documents) > 6:
+        brief_documents.append(f"… +{len(documents) - 6}")
+    lines.append(f"<b>{t('label.documents')}</b>\n" + (_escape("; ".join(brief_documents), 300) if documents else t("label.not_listed")))
     lines.append(
-        "<b>Application steps</b>\n"
-        + (_escape(_clean_text(scheme.get("application_process"), 550)) if scheme.get("application_process") else "Not listed in this dataset.")
+        f"<b>{t('label.application')}</b>\n"
+        + (_escape(_clean_text(scheme.get("application_process"), 300)) if scheme.get("application_process") else t("label.not_listed"))
     )
     if apply_url:
-        lines.append(f'<a href="{html.escape(apply_url, quote=True)}">Open the application page</a>')
+        lines.append(f'<a href="{html.escape(apply_url, quote=True)}">{t("label.open_application")}</a>')
     elif info_url:
-        lines.append("An application link was not supplied.")
-        lines.append(f'<a href="{html.escape(info_url, quote=True)}">Open the scheme information page</a>')
+        lines.append(t("label.application_missing"))
+        lines.append(f'<a href="{html.escape(info_url, quote=True)}">{t("label.open_information")}</a>')
     else:
-        lines.append("Application link: not supplied in this dataset.")
+        lines.append(t("label.no_application"))
+    if info_url:
+        lines.append(f'<a href="{html.escape(info_url, quote=True)}">{t("source.link")}</a>')
     lines.append(
-        "Source: supplied third-party dataset. Not independently verified"
+        t("label.source")
         + (f"; dataset timestamp: {_escape(scheme.get('scraped_at'), 60)}." if scheme.get("scraped_at") else ".")
-        + " Confirm current rules with the responsible department."
+        + " " + t("label.source_confirm")
     )
     return "\n\n".join(lines)
 
 
-def _scheme_keyboard(scheme: dict[str, Any], offset: int) -> InlineKeyboardMarkup:
+def _scheme_keyboard(scheme: dict[str, Any], offset: int, language: str = "en") -> InlineKeyboardMarkup:
     slug = scheme["slug"]
     apply_url = _valid_http_url(scheme.get("apply_url"))
     apply_button = (
-        InlineKeyboardButton("Apply Officially", url=apply_url)
+        InlineKeyboardButton(translate(language, "apply"), url=apply_url)
         if apply_url
-        else InlineKeyboardButton("Apply Officially", callback_data=f"scheme_apply:{slug}:{offset}")
+        else InlineKeyboardButton(translate(language, "apply"), callback_data=f"scheme_apply:{slug}:{offset}")
     )
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("View Details", callback_data=f"scheme_details:{slug}:{offset}"),
-                InlineKeyboardButton("Check Documents", callback_data=f"document_checklist:{slug}:{offset}"),
+                InlineKeyboardButton(translate(language, "details"), callback_data=f"scheme_details:{slug}:{offset}"),
+                InlineKeyboardButton(translate(language, "check.documents"), callback_data=f"document_checklist:{slug}:{offset}"),
             ],
             [
                 apply_button,
-                InlineKeyboardButton("Find Alternatives", callback_data=f"alternatives:{slug}:{offset}"),
+                InlineKeyboardButton(translate(language, "find.alternatives"), callback_data=f"alternatives:{slug}:{offset}"),
             ],
-            [InlineKeyboardButton("Back to Results", callback_data=f"recommendations_return:{offset}")],
+            [InlineKeyboardButton(translate(language, "back.results"), callback_data=f"recommendations_return:{offset}")],
         ]
     )
 
 
 def _details_keyboard(
-    scheme: dict[str, Any], offset: int, request_specific_community: bool = False
+    scheme: dict[str, Any], offset: int, request_specific_community: bool = False, language: str = "en"
 ) -> InlineKeyboardMarkup:
     slug = scheme["slug"]
     apply_url = _valid_http_url(scheme.get("apply_url"))
     apply_button = (
-        InlineKeyboardButton("Apply Officially", url=apply_url)
+        InlineKeyboardButton(translate(language, "apply"), url=apply_url)
         if apply_url
-        else InlineKeyboardButton("Apply Officially", callback_data=f"scheme_apply:{slug}:{offset}")
+        else InlineKeyboardButton(translate(language, "apply"), callback_data=f"scheme_apply:{slug}:{offset}")
     )
     rows = [
         [
-            InlineKeyboardButton("Check Documents", callback_data=f"document_checklist:{slug}:{offset}"),
-            InlineKeyboardButton("Find Alternatives", callback_data=f"alternatives:{slug}:{offset}"),
+            InlineKeyboardButton(translate(language, "check.documents"), callback_data=f"document_checklist:{slug}:{offset}"),
+            InlineKeyboardButton(translate(language, "find.alternatives"), callback_data=f"alternatives:{slug}:{offset}"),
         ],
         [apply_button],
     ]
@@ -258,15 +277,15 @@ def _details_keyboard(
         rows.append(
             [
                 InlineKeyboardButton(
-                    "Add detail for this check",
+                    translate(language, "specific.detail"),
                     callback_data=f"profile_specific:{slug}:{offset}",
                 )
             ]
         )
     rows.append(
         [
-            InlineKeyboardButton("Back to Results", callback_data=f"recommendations_return:{offset}"),
-            InlineKeyboardButton("Main Menu", callback_data="nav:home"),
+            InlineKeyboardButton(translate(language, "back.results"), callback_data=f"recommendations_return:{offset}"),
+            InlineKeyboardButton(translate(language, "main"), callback_data="nav:home"),
         ]
     )
     return InlineKeyboardMarkup(rows)
@@ -280,6 +299,13 @@ class SchemeSathiBot:
         self.by_slug = {item["slug"]: item for item in self.schemes}
         self._processed_callback_ids: OrderedDict[str, None] = OrderedDict()
 
+    def _language(self, user_id: int) -> str:
+        language = self.store.get_profile(user_id).get("language", "en")
+        return language if language in LANGUAGES else "en"
+
+    def _t(self, user_id: int, key: str, **values: str) -> str:
+        return translate(self._language(user_id), key, **values)
+
     def _reserve_callback(self, callback_id: str) -> bool:
         if callback_id in self._processed_callback_ids:
             return False
@@ -288,7 +314,7 @@ class SchemeSathiBot:
             self._processed_callback_ids.popitem(last=False)
         return True
 
-    def _social_category_keyboard(self) -> InlineKeyboardMarkup:
+    def _social_category_keyboard(self, language: str = "en") -> InlineKeyboardMarkup:
         rows = [
             [
                 InlineKeyboardButton(category, callback_data=f"profile_category:{category}")
@@ -296,43 +322,55 @@ class SchemeSathiBot:
             ]
             for index in range(0, len(SOCIAL_CATEGORIES), 2)
         ]
-        rows.append([InlineKeyboardButton("Skip", callback_data="profile_category:skip")])
+        rows.append([InlineKeyboardButton(translate(language, "skip"), callback_data="profile_category:skip")])
         return InlineKeyboardMarkup(rows)
 
-    async def _prompt_profile_field(self, message: Any, field: str) -> None:
+    async def _prompt_profile_field(self, message: Any, user_id: int, field: str) -> None:
+        language = self._language(user_id)
         if field == "social_category":
             await message.reply_text(
-                FIELD_PROMPTS[field],
-                reply_markup=self._social_category_keyboard(),
+                self._t(user_id, "prompt.social_category"),
+                reply_markup=self._social_category_keyboard(language),
             )
         elif field == "residence":
             await message.reply_text(
-                "Is your home in a rural or urban area? You may skip.",
+                self._t(user_id, "prompt.residence"),
                 reply_markup=InlineKeyboardMarkup(
                     [[
-                        InlineKeyboardButton("Rural", callback_data="profile_choice:residence:rural"),
-                        InlineKeyboardButton("Urban", callback_data="profile_choice:residence:urban"),
+                        InlineKeyboardButton(self._t(user_id, "rural"), callback_data="profile_choice:residence:rural"),
+                        InlineKeyboardButton(self._t(user_id, "urban"), callback_data="profile_choice:residence:urban"),
                     ]]
                 ),
             )
         elif field == "gender":
             await message.reply_text(
-                "Optional: what gender should I use when checking a scheme's conditions? You may skip.",
+                self._t(user_id, "prompt.gender"),
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
-                            InlineKeyboardButton("Female", callback_data="profile_choice:gender:female"),
-                            InlineKeyboardButton("Male", callback_data="profile_choice:gender:male"),
+                            InlineKeyboardButton(self._t(user_id, "female"), callback_data="profile_choice:gender:female"),
+                            InlineKeyboardButton(self._t(user_id, "male"), callback_data="profile_choice:gender:male"),
                         ],
                         [
-                            InlineKeyboardButton("Other", callback_data="profile_choice:gender:other"),
-                            InlineKeyboardButton("Skip", callback_data="profile_choice:gender:skip"),
+                            InlineKeyboardButton(self._t(user_id, "other"), callback_data="profile_choice:gender:other"),
+                            InlineKeyboardButton(self._t(user_id, "skip"), callback_data="profile_choice:gender:skip"),
                         ],
                     ]
                 ),
             )
+        elif field in {"disability", "bpl"}:
+            await message.reply_text(
+                self._t(user_id, f"prompt.{field}"),
+                reply_markup=InlineKeyboardMarkup(
+                    [[
+                        InlineKeyboardButton(self._t(user_id, "yes"), callback_data=f"profile_choice:{field}:yes"),
+                        InlineKeyboardButton(self._t(user_id, "no"), callback_data=f"profile_choice:{field}:no"),
+                        InlineKeyboardButton(self._t(user_id, "skip"), callback_data=f"profile_choice:{field}:skip"),
+                    ]]
+                ),
+            )
         else:
-            await message.reply_text(FIELD_PROMPTS[field])
+            await message.reply_text(self._t(user_id, f"prompt.{field}"))
 
     def _save_social_category(self, user_id: int, value: str) -> None:
         if value == "skip":
@@ -346,54 +384,71 @@ class SchemeSathiBot:
         self.store.replace_profile(user_id, profile)
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
         await update.effective_message.reply_text(
-            "Welcome to <b>SchemeSathi AI</b>\n<i>Your benefits. Your eligibility. Your rights.</i>\n\n"
-            "I help explore Indian Central and State scheme records. Dataset listings are not official verification or a guarantee of eligibility. "
-            "I do not need Aadhaar, OTPs, passwords, or document numbers.\n\nChoose an option:",
+            self._t(user_id, "welcome"),
             parse_mode=ParseMode.HTML,
-            reply_markup=MAIN_MENU,
+            reply_markup=_main_menu(self._language(user_id)),
         )
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(
-            "/start — open the main menu\n/profile — view your saved profile\n/reset — stop the current conversation flow\n/delete_profile — permanently delete your saved profile, family and checklist data\n/about — service and data limitations\n\n"
-            "Use the buttons for scheme discovery, eligibility, family mapping, life events, document readiness, alternatives and comparisons. "
-            "Share only information you are comfortable storing locally."
+            self._t(update.effective_user.id, "help"),
+            parse_mode=ParseMode.HTML,
+        )
+
+    async def language_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
+        language = self._language(user_id)
+        await update.effective_message.reply_text(
+            f"{self._t(user_id, 'language.current', language=LANGUAGE_NAMES[language])}\n\n{self._t(user_id, 'language.title')}",
+            parse_mode=ParseMode.HTML,
+            reply_markup=_language_keyboard(language),
         )
 
     async def reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        self.store.clear_conversation(update.effective_user.id)
-        await update.effective_message.reply_text("Current conversation stopped. Your saved profile and family data were not changed.", reply_markup=MAIN_MENU)
+        user_id = update.effective_user.id
+        self.store.clear_conversation(user_id)
+        await update.effective_message.reply_text(
+            self._t(user_id, "reset"),
+            reply_markup=_main_menu(self._language(user_id)),
+        )
 
     async def profile(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        profile = self.store.get_profile(update.effective_user.id)
+        user_id = update.effective_user.id
+        profile = self.store.get_profile(user_id)
         fields = [
-            f"{key.replace('_', ' ').title()}: "
-            f"{profile.get(key) if profile.get(key) is not None else 'not provided'}"
-            for key in (*PROFILE_FIELDS, "disability", "bpl", "life_event")
+            f"{_escape(self._t(user_id, f'profile.field.{key}'), 50)}: "
+            f"{_escape(profile.get(key) if profile.get(key) is not None else self._t(user_id, 'field.not_provided'), 140)}"
+            for key in (*PROFILE_FIELDS, "life_event")
         ]
+        fields.append(f"{self._t(user_id, 'language.short')}: {LANGUAGE_NAMES[language]}")
         await update.effective_message.reply_text(
-            "Your saved profile:\n" + "\n".join(fields),
+            self._t(user_id, "profile.title") + "\n" + "\n".join(fields),
+            parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(
                 [
-                    [InlineKeyboardButton("Edit profile", callback_data="nav:profile")],
-                    [InlineKeyboardButton("Edit social category", callback_data="nav:edit_social_category")],
-                    [InlineKeyboardButton("Main menu", callback_data="nav:home")],
+                    [InlineKeyboardButton(self._t(user_id, "profile.edit"), callback_data="nav:profile")],
+                    [InlineKeyboardButton(self._t(user_id, "profile.category"), callback_data="nav:edit_social_category")],
+                    [InlineKeyboardButton(self._t(user_id, "language.button"), callback_data="nav:language")],
+                    [InlineKeyboardButton(self._t(user_id, "home"), callback_data="nav:home")],
                 ]
             ),
         )
 
     async def delete_profile(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        self.store.delete_profile(update.effective_user.id)
-        await update.effective_message.reply_text("Your saved profile, family members, document checklist and conversation state have been deleted.", reply_markup=MAIN_MENU)
+        user_id = update.effective_user.id
+        language = self._language(user_id)
+        self.store.delete_profile(user_id)
+        await update.effective_message.reply_text(
+            translate(language, "profile.deleted"),
+            reply_markup=_main_menu(language),
+        )
 
     async def about(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
         await update.effective_message.reply_text(
-            "SchemeSathi AI — Bridging the gap between government benefits and the people who need them.\n\n"
-            f"Loaded {len(self.schemes):,} records from the supplied third-party CSV. Records and links have not been independently verified against official sources. "
-            f"Intent model: {'trained model available' if INTENT_MODEL_PATH.is_file() else 'not trained yet'}. "
-            "Recommendations use text relevance; they are not eligibility probabilities. Eligibility checks are deterministic checks of populated structured fields only. "
-            "Missing details remain unknown. No paid AI API is used."
+            f"{self._t(user_id, 'about')}\n\n📚 {len(self.schemes):,} {self._t(user_id, 'records.label')}."
         )
 
     async def callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -401,7 +456,7 @@ class SchemeSathiBot:
         if not query:
             return
         if not self._reserve_callback(str(query.id)):
-            await query.answer("This action was already processed.")
+            await query.answer(self._t(update.effective_user.id, "callback.duplicate"))
             return
         data = query.data or ""
         action, separator, value = data.partition(":")
@@ -409,11 +464,13 @@ class SchemeSathiBot:
         parts = data.split(":")
         valid = separator and (
             (route == "nav" and value in NAVIGATION_ACTIONS)
+            or (route == "language" and value in LANGUAGES)
             or (
                 route == "document_checklist"
-                and len(parts) in {2, 3}
+                and len(parts) in {2, 3, 4}
                 and parts[1] in self.by_slug
                 and (len(parts) == 2 or parts[2].isdigit())
+                and (len(parts) < 4 or (parts[3].isdigit() and int(parts[3]) * DOCUMENTS_PER_PAGE < max(1, len(_documents_for(self.by_slug[parts[1]])))))
             )
             or (route == "eligibility_check" and value in self.by_slug)
             or (
@@ -443,6 +500,7 @@ class SchemeSathiBot:
                 and (
                     (parts[1] == "residence" and parts[2] in {"rural", "urban"})
                     or (parts[1] == "gender" and parts[2] in {"female", "male", "other", "skip"})
+                    or (parts[1] in {"disability", "bpl"} and parts[2] in {"yes", "no", "skip"})
                 )
             )
             or (
@@ -460,32 +518,43 @@ class SchemeSathiBot:
             )
             or (
                 route == "document_status"
-                and len(parts) in {4, 5}
+                and len(parts) in {4, 5, 6}
                 and parts[1] in self.by_slug
                 and parts[2].isdigit()
                 and int(parts[2]) < len(_documents_for(self.by_slug[parts[1]]))
                 and parts[3] in {"available", "missing", "unknown"}
-                and (len(parts) == 4 or parts[4].isdigit())
+                and all(item.isdigit() for item in parts[4:])
             )
         )
         await query.answer(
-            None if valid else "This button is no longer available.",
+            None if valid else self._t(update.effective_user.id, "callback.expired"),
             show_alert=not valid,
         )
         if not valid:
             return
         user_id = update.effective_user.id
-        if route == "nav":
+        if route == "language":
+            self.store.clear_conversation(user_id)
+            profile = self.store.get_profile(user_id)
+            profile["language"] = value
+            self.store.replace_profile(user_id, profile)
+            await query.edit_message_text(
+                self._t(user_id, "language.saved", language=LANGUAGE_NAMES[value]) + "\n\n" + self._t(user_id, "welcome"),
+                parse_mode=ParseMode.HTML,
+                reply_markup=_main_menu(value),
+            )
+        elif route == "nav":
             await self._menu_action(query, user_id, value)
         elif route == "document_checklist":
             self.store.clear_conversation(user_id)
-            offset = int(parts[2]) if len(parts) == 3 else 0
-            await self._document_checklist(query.message, user_id, parts[1], offset)
+            offset = int(parts[2]) if len(parts) >= 3 else 0
+            page = int(parts[3]) if len(parts) == 4 else 0
+            await self._document_checklist(query.message, user_id, parts[1], offset, page, edit=True)
         elif route == "eligibility_check":
             self.store.clear_conversation(user_id)
             await self._show_scheme_eligibility(query.message, user_id, self.by_slug[value])
         elif route == "document_status":
-            _, slug, index_text, status, *offset_value = parts
+            _, slug, index_text, status, *page_values = parts
             self.store.clear_conversation(user_id)
             document = _documents_for(self.by_slug[slug])[int(index_text)]
             self.store.set_document_status(user_id, slug, document, status)
@@ -493,7 +562,9 @@ class SchemeSathiBot:
                 query.message,
                 user_id,
                 slug,
-                int(offset_value[0]) if offset_value else 0,
+                int(page_values[0]) if page_values else 0,
+                int(page_values[1]) if len(page_values) > 1 else 0,
+                edit=True,
             )
         elif route == "alternatives":
             self.store.clear_conversation(user_id)
@@ -536,8 +607,8 @@ class SchemeSathiBot:
                 self._save_social_category(user_id, value)
                 self.store.clear_conversation(user_id)
                 await query.message.reply_text(
-                    "Social category preference updated. You can change or remove it at any time.",
-                    reply_markup=MAIN_MENU,
+                    self._t(user_id, "profile.updated"),
+                    reply_markup=_main_menu(self._language(user_id)),
                 )
             else:
                 await query.message.reply_text("That profile question has expired. Open Edit profile to try again.")
@@ -573,19 +644,26 @@ class SchemeSathiBot:
         target = getattr(message, "message", message)
         self.store.clear_conversation(user_id)
         if action in {"home", ""}:
-            await target.reply_text("Choose an option:", reply_markup=MAIN_MENU)
+            await target.reply_text(self._t(user_id, "choose"), reply_markup=_main_menu(self._language(user_id)))
+        elif action == "language":
+            language = self._language(user_id)
+            text = f"{self._t(user_id, 'language.current', language=LANGUAGE_NAMES[language])}\n\n{self._t(user_id, 'language.title')}"
+            if hasattr(message, "edit_message_text"):
+                await message.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=_language_keyboard(language))
+            else:
+                await target.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=_language_keyboard(language))
         elif action == "profile":
             self.store.set_conversation(user_id, "profile", {"index": 0, "profile": self.store.get_profile(user_id)})
-            await self._prompt_profile_field(target, PROFILE_FIELDS[0])
+            await self._prompt_profile_field(target, user_id, PROFILE_FIELDS[0])
         elif action == "edit_social_category":
             self.store.set_conversation(user_id, "social_category_edit")
             await target.reply_text(
-                FIELD_PROMPTS["social_category"],
-                reply_markup=self._social_category_keyboard(),
+                self._t(user_id, "prompt.social_category"),
+                reply_markup=self._social_category_keyboard(self._language(user_id)),
             )
         elif action == "add_family":
             self.store.set_conversation(user_id, "family", {"index": 0, "profile": {}})
-            await target.reply_text("What should I call this family member?")
+            await target.reply_text(self._t(user_id, "prompt.family_name"))
         elif action == "family_edit":
             await self._edit_household(target, user_id)
         elif action == "family":
@@ -593,13 +671,13 @@ class SchemeSathiBot:
         elif action == "documents":
             self.store.set_conversation(user_id, "document_lookup")
             await target.reply_text(
-                "Type a scheme name to open its document-readiness checklist. You can also choose “Mark document readiness” on a scheme result."
+                self._t(user_id, "prompt.documents")
             )
         elif action == "eligibility":
             profile = self.store.get_profile(user_id)
             if not _profile_ready(profile):
                 self.store.set_conversation(user_id, "profile", {"index": 0, "profile": profile, "return_to": action})
-                await target.reply_text("I need your state and occupation to make useful, location-aware suggestions. Let's update your profile.\n\n" + FIELD_PROMPTS[PROFILE_FIELDS[0]])
+                await target.reply_text(self._t(user_id, "need.profile") + self._t(user_id, "prompt.age"))
                 return
             await self._show_recommendations(
                 target,
@@ -612,7 +690,7 @@ class SchemeSathiBot:
             profile = self.store.get_profile(user_id)
             if not _profile_ready(profile):
                 self.store.set_conversation(user_id, "profile", {"index": 0, "profile": profile, "return_to": action})
-                await target.reply_text("I need your state and occupation to make useful, location-aware suggestions. Let's update your profile.\n\n" + FIELD_PROMPTS[PROFILE_FIELDS[0]])
+                await target.reply_text(self._t(user_id, "need.profile") + self._t(user_id, "prompt.age"))
                 return
             if action == "discover":
                 await self._show_recommendations(target, user_id, profile, "government assistance benefits for my circumstances")
@@ -620,22 +698,54 @@ class SchemeSathiBot:
                 await self._show_recommendations(target, user_id, profile, "alternative assistance schemes", alternatives=True)
         elif action == "event":
             self.store.set_conversation(user_id, "event", {})
-            await target.reply_text("What life event should I consider? Examples: marriage, childbirth, education, unemployment, disability, retirement, death of a breadwinner, starting a business or farming.")
+            await target.reply_text(self._t(user_id, "prompt.event"))
         elif action == "compare":
             self.store.set_conversation(user_id, "compare", {})
-            await target.reply_text("Type two or three scheme names (separated by commas) to compare.")
+            await target.reply_text(self._t(user_id, "prompt.compare"))
         elif action == "ask":
             self.store.set_conversation(user_id, "ask", {})
-            await target.reply_text("Ask a question about a scheme, benefit, eligibility description, documents or application process.")
+            await target.reply_text(self._t(user_id, "prompt.ask"))
         elif action == "delete":
-            await target.reply_text("Delete your saved profile, family members and document checklist?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Yes, delete my data", callback_data="nav:confirm_delete"), InlineKeyboardButton("Cancel", callback_data="nav:home")]]))
+            await target.reply_text(self._t(user_id, "delete.confirm"), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(self._t(user_id, "delete.yes"), callback_data="nav:confirm_delete"), InlineKeyboardButton(self._t(user_id, "cancel"), callback_data="nav:home")]]))
         elif action == "confirm_delete":
+            language = self._language(user_id)
             self.store.delete_profile(user_id)
-            await target.reply_text("Your saved profile, family members, document checklist and conversation state have been deleted.", reply_markup=MAIN_MENU)
+            await target.reply_text(translate(language, "profile.deleted"), reply_markup=_main_menu(language))
 
     async def text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         text = (update.effective_message.text or "").strip()
+        quick_actions = {
+            "home": "home", "menu": "home", "main menu": "home", "back": "home",
+            "schemes": "discover", "discover": "discover", "find schemes": "discover",
+            "family": "family", "family benefits": "family",
+            "life event": "event", "eligibility": "eligibility", "check eligibility": "eligibility",
+            "documents": "documents", "document checklist": "documents",
+            "alternatives": "alternatives", "compare": "compare", "compare schemes": "compare",
+            "ask": "ask", "ask a question": "ask", "language": "language", "change language": "language",
+            "profile": "profile", "edit profile": "profile", "delete my data": "delete",
+        }
+        localized_actions = {
+            "menu.discover": "discover", "menu.family": "family", "menu.event": "event",
+            "menu.eligibility": "eligibility", "menu.documents": "documents",
+            "menu.alternatives": "alternatives", "menu.compare": "compare", "menu.ask": "ask",
+            "menu.profile": "profile", "menu.language": "language", "menu.delete": "delete",
+        }
+        normalized_text = _normalize_menu_text(text)
+        action = quick_actions.get(normalized_text)
+        if action is None:
+            for language in LANGUAGES:
+                action = next(
+                    (target for key, target in localized_actions.items()
+                     if _normalize_menu_text(translate(language, key)) == normalized_text),
+                    None,
+                )
+                if action:
+                    break
+        if action:
+            self.store.clear_conversation(user_id)
+            await self._menu_action(update.effective_message, user_id, action)
+            return
         state, data = self.store.get_conversation(user_id)
         if state == "profile":
             await self._collect_profile(update, user_id, text, data)
@@ -648,8 +758,8 @@ class SchemeSathiBot:
             )
             if selected is None and text.casefold() not in {"skip", "prefer not to say"}:
                 await update.effective_message.reply_text(
-                    FIELD_PROMPTS["social_category"],
-                    reply_markup=self._social_category_keyboard(),
+                    self._t(user_id, "prompt.social_category"),
+                    reply_markup=self._social_category_keyboard(self._language(user_id)),
                 )
                 return
             self._save_social_category(
@@ -658,8 +768,8 @@ class SchemeSathiBot:
             )
             self.store.clear_conversation(user_id)
             await update.effective_message.reply_text(
-                "Social category preference updated.",
-                reply_markup=MAIN_MENU,
+                self._t(user_id, "profile.updated"),
+                reply_markup=_main_menu(self._language(user_id)),
             )
         elif state == "specific_community":
             if text.casefold() in {"skip", "prefer not to say"}:
@@ -701,10 +811,10 @@ class SchemeSathiBot:
             await self._show_recommendations(update.effective_message, user_id, profile, text)
         elif state == "compare":
             self.store.clear_conversation(user_id)
-            await self._compare(update.effective_message, text)
+            await self._compare(update.effective_message, user_id, text)
         elif state == "ask":
             self.store.clear_conversation(user_id)
-            await self._answer_question(update.effective_message, text)
+            await self._answer_question(update.effective_message, user_id, text)
         else:
             extracted = extract_profile_details(text)
             if extracted["values"]:
@@ -717,9 +827,9 @@ class SchemeSathiBot:
                 )
                 if field:
                     prompts = {
-                        "age": "Please send the single age to use, for example: I am 35.",
-                        "state": "Please send your current state or union territory name.",
-                        "occupation": "Please send the one occupation that applies to you.",
+                        "age": self._t(user_id, "prompt.confirm.age"),
+                        "state": self._t(user_id, "prompt.confirm.state"),
+                        "occupation": self._t(user_id, "prompt.confirm.occupation"),
                     }
                     self.store.set_conversation(user_id, "confirm_extraction", {"field": field})
                     await update.effective_message.reply_text(prompts[field])
@@ -731,24 +841,25 @@ class SchemeSathiBot:
             except FileNotFoundError:
                 intent = "general"
             intent_actions = {
-                "scheme_discovery": ("Discover schemes", "discover"),
-                "eligibility": ("Check eligibility", "eligibility"),
-                "family_benefits": ("Family benefits", "family"),
-                "life_events": ("Explore a life event", "event"),
-                "documents": ("Document checklist", "documents"),
-                "application": ("Ask about a scheme", "ask"),
-                "scheme_information": ("Ask about a scheme", "ask"),
-                "alternatives": ("Find alternatives", "alternatives"),
-                "comparison": ("Compare schemes", "compare"),
-                "general": ("Open the main menu", "home"),
+                "scheme_discovery": ("menu.discover", "discover"),
+                "eligibility": ("menu.eligibility", "eligibility"),
+                "family_benefits": ("menu.family", "family"),
+                "life_events": ("menu.event", "event"),
+                "documents": ("menu.documents", "documents"),
+                "application": ("menu.ask", "ask"),
+                "scheme_information": ("menu.ask", "ask"),
+                "alternatives": ("menu.alternatives", "alternatives"),
+                "comparison": ("menu.compare", "compare"),
+                "general": ("home", "home"),
             }
-            action_label, action = intent_actions.get(intent, intent_actions["general"])
+            action_label_key, action = intent_actions.get(intent, intent_actions["general"])
+            intent_label_key = f"intent.{intent}" if intent in intent_actions else "intent.general"
             await update.effective_message.reply_text(
-                f"I think this is about {intent.replace('_', ' ')}. Choose how to continue:",
+                self._t(user_id, "intent.choose", intent=self._t(user_id, intent_label_key)),
                 reply_markup=InlineKeyboardMarkup(
                     [
-                        [InlineKeyboardButton(action_label, callback_data=f"nav:{action}")],
-                        [InlineKeyboardButton("Open full menu", callback_data="nav:home")],
+                        [InlineKeyboardButton(self._t(user_id, action_label_key), callback_data=f"nav:{action}")],
+                        [InlineKeyboardButton(self._t(user_id, "menu.full"), callback_data="nav:home")],
                     ]
                 ),
             )
@@ -770,8 +881,8 @@ class SchemeSathiBot:
         self.store.update_profile(user_id, {field: value})
         self.store.clear_conversation(user_id)
         await update.effective_message.reply_text(
-            f"Confirmed {field.replace('_', ' ')}: {value}. Choose an option to continue.",
-            reply_markup=MAIN_MENU,
+            f"{self._t(user_id, 'profile.confirmed')} {field.replace('_', ' ')}: {value}. {self._t(user_id, 'choose')}",
+            reply_markup=_main_menu(self._language(user_id)),
         )
 
     async def _select_document_scheme(self, update: Update, user_id: int, text: str) -> None:
@@ -842,9 +953,9 @@ class SchemeSathiBot:
             )
         result = evaluate_eligibility(scheme, profile)
         await message.reply_text(
-            _scheme_card({"scheme": scheme, "eligibility": result}),
+            _scheme_card({"scheme": scheme, "eligibility": result}, self._language(user_id)),
             parse_mode=ParseMode.HTML,
-            reply_markup=_scheme_keyboard(scheme, 0),
+            reply_markup=_scheme_keyboard(scheme, 0, self._language(user_id)),
             disable_web_page_preview=True,
         )
 
@@ -861,20 +972,29 @@ class SchemeSathiBot:
             if field == "age":
                 match = re.search(r"\d{1,3}", text)
                 if not match or not 1 <= int(match.group()) <= 120:
-                    await message.reply_text("Please enter an age from 1 to 120, or type skip.")
+                    await message.reply_text(self._t(user_id, "error.age"))
                     return
                 value = int(match.group())
             elif field == "annual_income":
                 digits = re.sub(r"[^\d]", "", text)
                 if not digits:
-                    await message.reply_text("Please enter annual income in INR, or type skip.")
+                    await message.reply_text(self._t(user_id, "error.income"))
                     return
                 value = int(digits)
             elif field == "residence":
                 if text.casefold() not in {"rural", "urban"}:
-                    await message.reply_text("Please enter rural or urban, or type skip.")
+                    await message.reply_text(self._t(user_id, "error.residence"))
                     return
                 value = text.casefold()
+            elif field in {"disability", "bpl"}:
+                normalized = text.strip().casefold()
+                if normalized in {"yes", "y", "ಹೌದು", "हाँ"}:
+                    value = True
+                elif normalized in {"no", "n", "ಇಲ್ಲ", "नहीं"}:
+                    value = False
+                else:
+                    await self._prompt_profile_field(message, user_id, field)
+                    return
             elif field == "state":
                 value = text.strip().title()
             elif field == "social_category":
@@ -883,7 +1003,7 @@ class SchemeSathiBot:
                     None,
                 )
                 if selected is None:
-                    await self._prompt_profile_field(message, field)
+                    await self._prompt_profile_field(message, user_id, field)
                     return
                 value = selected
             else:
@@ -902,14 +1022,14 @@ class SchemeSathiBot:
         if index < len(PROFILE_FIELDS):
             data.update({"index": index, "profile": profile})
             self.store.set_conversation(user_id, "profile", data)
-            await self._prompt_profile_field(message, PROFILE_FIELDS[index])
+            await self._prompt_profile_field(message, user_id, PROFILE_FIELDS[index])
             return
         self.store.replace_profile(user_id, profile)
         self.store.clear_conversation(user_id)
         return_to = data.get("return_to")
         await message.reply_text(
-            "Profile saved. You can edit it or delete it at any time using /delete_profile.",
-            reply_markup=MAIN_MENU,
+            self._t(user_id, "profile.saved"),
+            reply_markup=_main_menu(self._language(user_id)),
         )
         if return_to in {"discover", "eligibility", "alternatives", "documents", "family"}:
             await self._menu_action(message, user_id, return_to)
@@ -926,34 +1046,43 @@ class SchemeSathiBot:
         profile = data.get("profile", {})
         if field == "name":
             if not text.strip():
-                await message.reply_text("Please enter a first name or family label.")
+                await message.reply_text(self._t(user_id, "error.name"))
                 return
             data["name"] = text[:80]
         elif text.casefold() not in {"skip", "unknown", "prefer not to say"}:
             if field == "age":
                 match = re.search(r"\d{1,3}", text)
                 if not match or not 1 <= int(match.group()) <= 120:
-                    await message.reply_text("Please enter an age from 1 to 120, or type skip.")
+                    await message.reply_text(self._t(user_id, "error.age"))
                     return
                 profile[field] = int(match.group())
             elif field == "annual_income":
                 digits = re.sub(r"[^\d]", "", text)
                 if not digits:
-                    await message.reply_text("Please enter annual income in INR, or type skip.")
+                    await message.reply_text(self._t(user_id, "error.income"))
                     return
                 profile[field] = int(digits)
             elif field == "residence":
                 if text.casefold() not in {"rural", "urban"}:
-                    await message.reply_text("Please enter rural or urban, or type skip.")
+                    await message.reply_text(self._t(user_id, "error.residence"))
                     return
                 profile[field] = text.casefold()
+            elif field in {"disability", "bpl"}:
+                normalized = text.strip().casefold()
+                if normalized in {"yes", "y", "ಹೌದು", "हाँ"}:
+                    profile[field] = True
+                elif normalized in {"no", "n", "ಇಲ್ಲ", "नहीं"}:
+                    profile[field] = False
+                else:
+                    await self._prompt_profile_field(message, user_id, field)
+                    return
             elif field == "social_category":
                 selected = next(
                     (category for category in SOCIAL_CATEGORIES[:-1] if category.casefold() == text.casefold()),
                     None,
                 )
                 if selected is None:
-                    await self._prompt_profile_field(message, field)
+                    await self._prompt_profile_field(message, user_id, field)
                     return
                 profile[field] = selected
             else:
@@ -969,9 +1098,9 @@ class SchemeSathiBot:
             self.store.set_conversation(user_id, "family", data)
             next_field = fields[index]
             if next_field == "name":
-                await message.reply_text("What should I call this family member?")
+                await message.reply_text(self._t(user_id, "prompt.family_name"))
             else:
-                await self._prompt_profile_field(message, next_field)
+                await self._prompt_profile_field(message, user_id, next_field)
             return
         member_id = data.get("member_id")
         if member_id is None:
@@ -982,8 +1111,8 @@ class SchemeSathiBot:
             return
         self.store.clear_conversation(user_id)
         await message.reply_text(
-            f"Saved {data['name']}. Household details are updated.",
-            reply_markup=MAIN_MENU,
+            self._t(user_id, "family.saved", name=data["name"]),
+            reply_markup=_main_menu(self._language(user_id)),
         )
         await self._family_summary(message, user_id, self.store.get_profile(user_id))
 
@@ -999,12 +1128,11 @@ class SchemeSathiBot:
         offset: int = 0,
     ) -> None:
         mode = "alternatives" if alternatives else "eligibility" if eligibility_only else "documents" if with_documents else "discover"
-        outcomes = {"potentially_eligible", "needs_information"} if alternatives else None
         results = self.recommender.recommend(
             profile,
             query,
             limit=len(self.schemes),
-            outcomes=outcomes,
+            outcomes={"potentially_eligible"},
         )
         if with_documents:
             results = [result for result in results if result["scheme"].get("documents_required")]
@@ -1016,49 +1144,59 @@ class SchemeSathiBot:
             [result["scheme"]["slug"] for result in results],
         )
         if not results:
-            await message.reply_text("No matching records were found for that request. Try a broader description or check the dataset later.", reply_markup=MAIN_MENU)
+            await message.reply_text(
+                f"<b>{self._t(user_id, 'no_eligible.title')}</b>\n{self._t(user_id, 'no_eligible.body')}",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [InlineKeyboardButton(self._t(user_id, "profile.edit.button"), callback_data="nav:profile")],
+                        [InlineKeyboardButton(self._t(user_id, "main"), callback_data="nav:home")],
+                    ]
+                ),
+            )
             return
-        await self._render_recommendation_page(message, results, offset, mode)
+        await self._render_recommendation_page(message, user_id, results, offset, mode)
 
     async def _render_recommendation_page(
         self,
         message: Any,
+        user_id: int,
         results: list[dict[str, Any]],
         offset: int,
         mode: str,
     ) -> None:
         page_results = results[max(0, offset) : max(0, offset) + 3]
         if not page_results:
-            await message.reply_text("That results page is no longer available.", reply_markup=MAIN_MENU)
+            await message.reply_text(self._t(user_id, "callback.expired"), reply_markup=_main_menu(self._language(user_id)))
             return
         if mode == "alternatives":
-            title = "Alternatives to consider"
+            title = self._t(user_id, "title.alternatives")
         elif mode == "documents":
-            title = "Schemes with listed documents"
+            title = self._t(user_id, "title.documents")
         else:
-            title = "Scheme matches"
+            title = self._t(user_id, "title.matches")
         await message.reply_text(
-            f"<b>{title}</b>\nShowing {offset + 1}–{offset + len(page_results)} of {len(results)} matches.",
+            f"<b>{title}</b>\n{self._t(user_id, 'label.showing', start=str(offset + 1), end=str(offset + len(page_results)), total=str(len(results)))}",
             parse_mode=ParseMode.HTML,
         )
         for result in page_results:
             await message.reply_text(
-                _scheme_card(result),
+                _scheme_card(result, self._language(user_id)),
                 parse_mode=ParseMode.HTML,
-                reply_markup=_scheme_keyboard(result["scheme"], offset),
+                reply_markup=_scheme_keyboard(result["scheme"], offset, self._language(user_id)),
                 disable_web_page_preview=True,
             )
         page_buttons: list[InlineKeyboardButton] = []
         if offset:
             page_buttons.append(
-                InlineKeyboardButton("Previous", callback_data=f"recommendations_page:{max(0, offset - 3)}")
+                InlineKeyboardButton(self._t(user_id, "previous"), callback_data=f"recommendations_page:{max(0, offset - 3)}")
             )
         if offset + 3 < len(results):
             page_buttons.append(
-                InlineKeyboardButton("Next", callback_data=f"recommendations_page:{offset + 3}")
+                InlineKeyboardButton(self._t(user_id, "next"), callback_data=f"recommendations_page:{offset + 3}")
             )
         navigation_rows = [page_buttons] if page_buttons else []
-        navigation_rows.append([InlineKeyboardButton("Main Menu", callback_data="nav:home")])
+        navigation_rows.append([InlineKeyboardButton(self._t(user_id, "main"), callback_data="nav:home")])
         await message.reply_text(
             "Choose a page or return to the menu.",
             reply_markup=InlineKeyboardMarkup(navigation_rows),
@@ -1088,38 +1226,38 @@ class SchemeSathiBot:
         if offset < 0 or offset % 3 or offset >= len(results):
             await query.message.reply_text("That results page is no longer available.")
             return
-        await self._render_recommendation_page(query.message, results, offset, mode)
+        await self._render_recommendation_page(query.message, user_id, results, offset, mode)
 
     async def _family_summary(self, message: Any, user_id: int, profile: dict[str, Any]) -> None:
         family = self.store.get_family(user_id)
-        members = [{"name": "You", **profile}, *family]
-        lines = ["<b>Your Household</b>"]
+        members = [{"name": self._t(user_id, "family.you"), **profile}, *family]
+        lines = [self._t(user_id, "family.title")]
         rows: list[list[InlineKeyboardButton]] = []
         for index, member in enumerate(members):
             details = [
-                str(member.get("occupation") or "Occupation not provided"),
-                f"Age {member['age']}" if member.get("age") is not None else "Age not provided",
+                str(member.get("occupation") or self._t(user_id, "family.occupation_missing")),
+                self._t(user_id, "family.age", age=str(member["age"])) if member.get("age") is not None else self._t(user_id, "family.age_missing"),
             ]
             lines.append(f"• {_escape(member['name'], 80)} — {_escape(', '.join(details), 120)}")
             rows.append(
                 [
                     InlineKeyboardButton(
-                        f"View {member['name'][:35]}'s benefits",
+                        self._t(user_id, "family.view", name=member["name"][:35]),
                         callback_data=f"family_benefits:{index}",
                     )
                 ]
             )
         rows.extend(
             [
-                [InlineKeyboardButton("Add Family Member", callback_data="nav:add_family")],
-                [InlineKeyboardButton("Edit Household", callback_data="nav:family_edit")],
-                [InlineKeyboardButton("Main Menu", callback_data="nav:home")],
+                [InlineKeyboardButton(self._t(user_id, "family.add"), callback_data="nav:add_family")],
+                [InlineKeyboardButton(self._t(user_id, "family.edit"), callback_data="nav:family_edit")],
+                [InlineKeyboardButton(self._t(user_id, "main"), callback_data="nav:home")],
             ]
         )
         if not family:
-            lines.append("\nYou are the only saved household member. Would you like to add others?")
+            lines.append(self._t(user_id, "family.only_you"))
         else:
-            lines.append("\nChoose a member to view their benefits separately.")
+            lines.append(self._t(user_id, "family.choose_member"))
         await message.reply_text(
             "\n".join(lines),
             parse_mode=ParseMode.HTML,
@@ -1130,7 +1268,7 @@ class SchemeSathiBot:
         self, message: Any, user_id: int, member_index: int
     ) -> None:
         profile = self.store.get_profile(user_id)
-        members = [{"name": "You", **profile}, *self.store.get_family(user_id)]
+        members = [{"name": self._t(user_id, "family.you"), **profile}, *self.store.get_family(user_id)]
         if not 0 <= member_index < len(members):
             await message.reply_text("That household member is no longer available.")
             return
@@ -1147,22 +1285,22 @@ class SchemeSathiBot:
     async def _edit_household(self, message: Any, user_id: int) -> None:
         family = self.store.get_family(user_id)
         rows = [
-            [InlineKeyboardButton("Edit your profile", callback_data="nav:profile")]
+            [InlineKeyboardButton(self._t(user_id, "family.profile.edit"), callback_data="nav:profile")]
         ]
         rows.extend(
             [
-                InlineKeyboardButton(f"Edit {member['name']}", callback_data=f"family_edit:{member['id']}")
+                InlineKeyboardButton(f"✏️ {member['name']}", callback_data=f"family_edit:{member['id']}")
             ]
             for member in family
         )
         rows.extend(
             [
-                [InlineKeyboardButton("Add Family Member", callback_data="nav:add_family")],
-                [InlineKeyboardButton("Main Menu", callback_data="nav:home")],
+                [InlineKeyboardButton(self._t(user_id, "family.add"), callback_data="nav:add_family")],
+                [InlineKeyboardButton(self._t(user_id, "main"), callback_data="nav:home")],
             ]
         )
         await message.reply_text(
-            "Choose a household profile to edit. Type “skip” to keep an existing answer.",
+            self._t(user_id, "family.choose_edit"),
             reply_markup=InlineKeyboardMarkup(rows),
         )
 
@@ -1188,7 +1326,7 @@ class SchemeSathiBot:
         await message.reply_text("What name or family label should I use?")
 
     async def _document_checklist(
-        self, message: Any, user_id: int, slug: str, offset: int = 0
+        self, message: Any, user_id: int, slug: str, offset: int = 0, page: int = 0, edit: bool = False
     ) -> None:
         scheme = self.by_slug.get(slug)
         if not scheme:
@@ -1196,42 +1334,59 @@ class SchemeSathiBot:
             return
         documents = _documents_for(scheme)
         if not documents:
-            await message.reply_text(
-                "The dataset has no document list for this scheme. Check the responsible department's official guidance.",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [InlineKeyboardButton("Back to Results", callback_data=f"recommendations_return:{offset}")],
-                        [InlineKeyboardButton("Main Menu", callback_data="nav:home")],
-                    ]
-                ),
+            text = self._t(user_id, "documents.none")
+            markup = InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton(self._t(user_id, "back.results"), callback_data=f"recommendations_return:{offset}")],
+                    [InlineKeyboardButton(self._t(user_id, "main"), callback_data="nav:home")],
+                ]
+            )
+            send = message.edit_text if edit else message.reply_text
+            await send(
+                text,
+                reply_markup=markup,
             )
             return
         statuses = self.store.get_document_statuses(user_id, slug)
         rows = []
-        lines = [f"<b>Document readiness — {_escape(scheme['name'], 150)}</b>"]
-        missing = []
-        for index, document in enumerate(documents):
+        start = page * DOCUMENTS_PER_PAGE
+        page_documents = documents[start : start + DOCUMENTS_PER_PAGE]
+        available_count = sum(statuses.get(document) == "available" for document in documents)
+        lines = [f"{self._t(user_id, 'documents.title')} — <b>{_escape(scheme['name'], 150)}</b>"]
+        lines.append(self._t(
+            user_id,
+            "documents.summary",
+            start=str(start + 1),
+            end=str(start + len(page_documents)),
+            total=str(len(documents)),
+            done=str(available_count),
+        ))
+        for index, document in enumerate(page_documents, start=start):
             status = statuses.get(document, "unknown")
-            lines.append(f"{index + 1}. {_escape(document, 140)} — <b>{status}</b>")
-            if status != "available":
-                missing.append(document)
+            lines.append(f"{index + 1}. {_escape(document, 140)} — <b>{self._t(user_id, f'documents.{status}')}</b>")
             rows.append(
                 [
-                    InlineKeyboardButton(f"{index + 1}: Available", callback_data=f"document_status:{slug}:{index}:available:{offset}"),
-                    InlineKeyboardButton("Missing", callback_data=f"document_status:{slug}:{index}:missing:{offset}"),
-                    InlineKeyboardButton("Unknown", callback_data=f"document_status:{slug}:{index}:unknown:{offset}"),
+                    InlineKeyboardButton(f"{index + 1}: {self._t(user_id, 'documents.available.label')}", callback_data=f"document_status:{slug}:{index}:available:{offset}:{page}"),
+                    InlineKeyboardButton(self._t(user_id, "documents.missing.label"), callback_data=f"document_status:{slug}:{index}:missing:{offset}:{page}"),
+                    InlineKeyboardButton(self._t(user_id, "documents.unknown.label"), callback_data=f"document_status:{slug}:{index}:unknown:{offset}:{page}"),
                 ]
             )
-        lines.append(f"\nReadiness: {len(documents) - len(missing)}/{len(documents)} marked available.")
-        if missing:
-            lines.append("Still to confirm or prepare: " + _escape(", ".join(missing), 400))
+        page_count = max(1, (len(documents) + DOCUMENTS_PER_PAGE - 1) // DOCUMENTS_PER_PAGE)
+        page_controls = []
+        if page > 0:
+            page_controls.append(InlineKeyboardButton(self._t(user_id, "previous"), callback_data=f"document_checklist:{slug}:{offset}:{page - 1}"))
+        if page + 1 < page_count:
+            page_controls.append(InlineKeyboardButton(self._t(user_id, "next"), callback_data=f"document_checklist:{slug}:{offset}:{page + 1}"))
+        if page_controls:
+            rows.append(page_controls)
         rows.extend(
             [
-                [InlineKeyboardButton("Back to Results", callback_data=f"recommendations_return:{offset}")],
-                [InlineKeyboardButton("Main Menu", callback_data="nav:home")],
+                [InlineKeyboardButton(self._t(user_id, "back.results"), callback_data=f"recommendations_return:{offset}")],
+                [InlineKeyboardButton(self._t(user_id, "main"), callback_data="nav:home")],
             ]
         )
-        await message.reply_text(
+        send = message.edit_text if edit else message.reply_text
+        await send(
             "\n".join(lines),
             parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(rows),
@@ -1264,9 +1419,9 @@ class SchemeSathiBot:
             for condition in item["eligibility"].unknown
         )
         await message.reply_text(
-            _scheme_details(item),
+            _scheme_details(item, self._language(user_id)),
             parse_mode=ParseMode.HTML,
-            reply_markup=_details_keyboard(scheme, offset, request_specific),
+            reply_markup=_details_keyboard(scheme, offset, request_specific, self._language(user_id)),
             disable_web_page_preview=True,
         )
 
@@ -1312,42 +1467,42 @@ class SchemeSathiBot:
             profile,
             f"{original.get('category') or ''} {original.get('beneficiary_type') or ''} {original.get('description') or ''}",
             limit=5,
-            outcomes={"potentially_eligible", "needs_information"},
+            outcomes={"potentially_eligible"},
         )
         results = [item for item in results if item["scheme"]["slug"] != slug][:3]
         if not results:
             await message.reply_text(
-                "No alternatives with matching or unknown structured conditions were found in this dataset.",
+                self._t(user_id, "no_alternatives"),
                 reply_markup=InlineKeyboardMarkup(
                     [
-                        [InlineKeyboardButton("Back to Results", callback_data=f"recommendations_return:{offset}")],
-                        [InlineKeyboardButton("Main Menu", callback_data="nav:home")],
+                        [InlineKeyboardButton(self._t(user_id, "back.results"), callback_data=f"recommendations_return:{offset}")],
+                        [InlineKeyboardButton(self._t(user_id, "main"), callback_data="nav:home")],
                     ]
                 ),
             )
             return
         await message.reply_text(
-            "<b>Alternatives to consider</b>\nNo known structured condition failed; unknown conditions still need checking.",
+            f"<b>{self._t(user_id, 'title.alternatives')}</b>\n{self._t(user_id, 'alternatives.subtitle')}",
             parse_mode=ParseMode.HTML,
         )
         for item in results:
             await message.reply_text(
-                _scheme_card(item),
+                _scheme_card(item, self._language(user_id)),
                 parse_mode=ParseMode.HTML,
-                reply_markup=_scheme_keyboard(item["scheme"], offset),
+                reply_markup=_scheme_keyboard(item["scheme"], offset, self._language(user_id)),
                 disable_web_page_preview=True,
             )
         await message.reply_text(
-            "Return to your original matches or choose another section.",
+            self._t(user_id, "alternatives.return"),
             reply_markup=InlineKeyboardMarkup(
                 [
-                    [InlineKeyboardButton("Back to Results", callback_data=f"recommendations_return:{offset}")],
-                    [InlineKeyboardButton("Main Menu", callback_data="nav:home")],
+                    [InlineKeyboardButton(self._t(user_id, "back.results"), callback_data=f"recommendations_return:{offset}")],
+                    [InlineKeyboardButton(self._t(user_id, "main"), callback_data="nav:home")],
                 ]
             ),
         )
 
-    async def _compare(self, message: Any, text: str) -> None:
+    async def _compare(self, message: Any, user_id: int, text: str) -> None:
         queries = [item.strip() for item in text.split(",") if item.strip()][:3]
         if len(queries) < 2:
             await message.reply_text("Please provide at least two scheme names separated by commas.")
@@ -1369,34 +1524,37 @@ class SchemeSathiBot:
             await message.reply_text("I could not find two scheme records to compare. Try more distinctive names.")
             return
         for scheme in schemes:
+            source_url = _valid_http_url(scheme.get("official_url"))
             text = (
                 f"<b>{_escape(scheme.get('name'))}</b>\n"
-                f"Benefits: {_escape(scheme.get('benefits'), 600) or 'Not provided'}\n"
-                f"Eligibility: {_escape(scheme.get('eligibility_text'), 600) or 'Not provided'}\n"
-                f"Documents: {_escape(scheme.get('documents_required'), 500) or 'Not provided'}\n"
-                f"Application: {_escape(scheme.get('application_process'), 500) or 'Not provided'}\n"
-                f"Information URL: {_escape(scheme.get('official_url'), 450) or 'Not provided'}\n"
-                "Source: third-party dataset record; not independently verified."
+                f"💰 {_escape(_short_summary(scheme.get('benefits'), 120), 140)}\n"
+                f"✅ {_escape(_short_summary(scheme.get('eligibility_text'), 150), 170)}\n"
+                + (f'<a href="{html.escape(source_url, quote=True)}">{self._t(user_id, "source.link")}</a>' if source_url else self._t(user_id, "source.missing"))
             )
             await message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
-    async def _answer_question(self, message: Any, text: str) -> None:
+    async def _answer_question(self, message: Any, user_id: int, text: str) -> None:
         matches = self.recommender.faq_matches(text, limit=1)
-        if not matches or matches[0][1] <= 0:
-            await message.reply_text("I couldn't find a relevant scheme description in this dataset. Try the scheme's exact name or check an official department source.", reply_markup=MAIN_MENU)
+        if not matches or matches[0][1] < 0.12:
+            await message.reply_text(self._t(user_id, "not_found"), reply_markup=_main_menu(self._language(user_id)))
             return
         scheme, score = matches[0]
+        profile = self.store.get_profile(user_id)
+        self.store.set_recommendation_page(user_id, text, profile, "ask", [scheme["slug"]])
+        info_url = _valid_http_url(scheme.get("official_url"))
         answer = (
             f"<b>{_escape(scheme.get('name'))}</b>\n"
-            f"Description: {_escape(scheme.get('description'), 900) or 'Not provided'}\n"
-            f"Benefits: {_escape(scheme.get('benefits'), 650) or 'Not provided'}\n"
-            f"Eligibility description: {_escape(scheme.get('eligibility_text'), 650) or 'Not provided'}\n"
-            f"Documents: {_escape(scheme.get('documents_required'), 450) or 'Not provided'}\n"
-            f"Application process: {_escape(scheme.get('application_process'), 700) or 'Not provided'}\n"
-            f"Information: {_escape(scheme.get('official_url'), 450) or 'Not provided'}\n"
-            f"Text match score: {score:.3f} (not an eligibility probability). Dataset record not independently verified."
+            f"📝 {_escape(_short_summary(scheme.get('description'), 180), 200)}\n"
+            f"💰 {_escape(_short_summary(scheme.get('benefits'), 130), 150)}\n"
+            + (f'<a href="{html.escape(info_url, quote=True)}">{self._t(user_id, "source.link")}</a>\n' if info_url else self._t(user_id, "source.missing") + "\n")
+            + f"{self._t(user_id, 'label.score')}: {score:.2f} · {self._t(user_id, 'label.score_note')}."
         )
-        await message.reply_text(answer, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        await message.reply_text(
+            answer,
+            parse_mode=ParseMode.HTML,
+            reply_markup=_scheme_keyboard(scheme, 0, self._language(user_id)),
+            disable_web_page_preview=True,
+        )
 
 
 def create_application() -> Application:
@@ -1417,6 +1575,7 @@ def create_application() -> Application:
     application.add_handler(CommandHandler("help", lambda u, c: invoke("help_command", u, c)))
     application.add_handler(CommandHandler("reset", lambda u, c: invoke("reset", u, c)))
     application.add_handler(CommandHandler("profile", lambda u, c: invoke("profile", u, c)))
+    application.add_handler(CommandHandler("language", lambda u, c: invoke("language_command", u, c)))
     application.add_handler(CommandHandler("delete_profile", lambda u, c: invoke("delete_profile", u, c)))
     application.add_handler(CommandHandler("about", lambda u, c: invoke("about", u, c)))
     application.add_handler(CallbackQueryHandler(service.callback))
@@ -1426,5 +1585,8 @@ def create_application() -> Application:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    # HTTPX logs full Bot API URLs at INFO, which contain the bot token.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     application = create_application()
     application.run_polling(allowed_updates=Update.ALL_TYPES)

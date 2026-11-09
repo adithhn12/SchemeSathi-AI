@@ -41,15 +41,19 @@ Browse recommendations, search scheme records, explore life-event topics, and co
 
 ### ✅ Structured Eligibility Checks
 
-Where the dataset provides structured fields, the bot can check age, income, state, gender, residence, disability, BPL status, listed social category, and explicit beneficiary occupation conditions. Results distinguish satisfied, failed, and unknown conditions. A missing condition is treated as unknown.
+Where the dataset provides structured fields, the bot can check age, income, state, gender, residence, disability, BPL status, listed social category, and explicit beneficiary occupation conditions. Recommendation lists include only schemes that pass every available structured check for the saved profile; a failed or unknown check excludes a scheme. A missing condition is treated as unknown. Free-text eligibility rules in the source descriptions still need to be confirmed with the department.
 
 ### 📄 Scheme Details and Documents
 
-Review scheme descriptions, benefits, listed requirements, application steps, and dataset-provided links. Document lookup and readiness checklists help organize preparation for household members.
+Review compact scheme cards with a clickable dataset-provided source link, benefits, and a summary of profile checks. Open a card for more details. Document readiness checklists are paginated to keep each chat screen manageable and help organize preparation for household members.
 
 ### 🧠 Local Recommendation Tools
 
 TF-IDF and cosine similarity support recommendation and FAQ retrieval. Relevance scores describe text similarity; they are not eligibility probabilities.
+
+### 🌐 English, Kannada, and Hindi Interface
+
+Choose English, ಕನ್ನಡ, or हिन्दी from the main menu or use `/language`. Your preference is saved with your profile. Menus, onboarding prompts, key guidance, family tools, document checklists, and common scheme actions use the selected language. Scheme descriptions and source dataset text remain in the language supplied by the dataset, mostly English. Free-text search and profile extraction work best in English.
 
 ### 🗑️ Privacy Controls
 
@@ -117,7 +121,7 @@ python schemesathi.py
 
 Open your bot in Telegram and send `/start`. The bot needs internet access to communicate with Telegram.
 
-Available commands: `/start`, `/help`, `/reset`, `/about`, `/profile`, and `/delete_profile`.
+Available commands: `/start`, `/help`, `/reset`, `/about`, `/profile`, `/language`, and `/delete_profile`.
 
 ### Optional: rebuild local reports and model
 
