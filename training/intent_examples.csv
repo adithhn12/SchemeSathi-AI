@@ -1,0 +1,81 @@
+text,intent
+Find government schemes I can apply for,scheme_discovery
+What benefits are available for a farmer in Karnataka?,scheme_discovery
+Show schemes for my profile,scheme_discovery
+Help me discover government assistance,scheme_discovery
+Which government benefits may suit my family?,scheme_discovery
+Find scholarships and welfare schemes near me,scheme_discovery
+I want to know what schemes I may qualify for,scheme_discovery
+Show me relevant central and state schemes,scheme_discovery
+Am I eligible for this scheme?,eligibility
+Check whether my age and income meet the rules,eligibility
+Why do I not match the eligibility conditions?,eligibility
+What requirements am I missing?,eligibility
+Does my state qualify for this benefit?,eligibility
+Check my scheme eligibility,eligibility
+Explain passed and failed conditions,eligibility
+Can I apply based on my family income?,eligibility
+Find benefits for everyone in my household,family_benefits
+Add my spouse to family benefits,family_benefits
+Show schemes for my children and parents,family_benefits
+Map government benefits across my family,family_benefits
+What can my family members apply for?,family_benefits
+Check benefits separately for each relative,family_benefits
+I want to add a family member,family_benefits
+Summarize our household assistance options,family_benefits
+I recently had a baby,life_events
+I am getting married and need assistance,life_events
+"I lost my job, what help is available?",life_events
+Find support after the death of our breadwinner,life_events
+I am retiring soon,life_events
+My child is starting college,life_events
+I became disabled and need support,life_events
+I want to start a small business,life_events
+Which documents are required for this scheme?,documents
+Show my application document checklist,documents
+"I have my income certificate, what is still missing?",documents
+Mark this document as available,documents
+What paperwork do I need to apply?,documents
+Check my document readiness,documents
+List the certificates required,documents
+I do not have a caste certificate,documents
+How do I apply for the scheme?,application
+Open the official application website,application
+Where should I submit my application?,application
+Explain the application steps,application
+Can I apply online?,application
+Give me the scheme application link,application
+What is the process to receive this benefit?,application
+How can I contact the department?,application
+Tell me about this scheme,scheme_information
+What benefits does it provide?,scheme_information
+Explain the scheme details,scheme_information
+Who runs this program?,scheme_information
+What is the purpose of this government benefit?,scheme_information
+Give me information about the scholarship,scheme_information
+What does this scheme offer?,scheme_information
+Summarize this scheme for me,scheme_information
+"I do not meet the age limit, show alternatives",alternatives
+Find another scheme with different conditions,alternatives
+What other assistance can I get instead?,alternatives
+Suggest alternatives to this benefit,alternatives
+"I failed the income rule, what else is available?",alternatives
+Show schemes that may fit me better,alternatives
+Find similar programs with looser requirements,alternatives
+What is my next best option?,alternatives
+Compare these two schemes,comparison
+Which scheme offers the better benefit?,comparison
+Show differences in eligibility and documents,comparison
+Compare the application procedures,comparison
+I want a side by side scheme comparison,comparison
+What is different between these programs?,comparison
+Compare benefits for these schemes,comparison
+Which one has fewer requirements?,comparison
+Hello there,general
+Thank you for helping me,general
+What can this bot do?,general
+I have a question,general
+Good morning,general
+Help,general
+How does this service work?,general
+I do not understand,general

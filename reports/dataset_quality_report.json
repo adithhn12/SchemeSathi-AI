@@ -1,0 +1,252 @@
+{
+  "source": "Supplied CSV from Sumna/indian-government-schemes-2025 (third-party dataset)",
+  "source_url": "https://huggingface.co/datasets/Sumna/indian-government-schemes-2025",
+  "encoding": "utf-8-sig",
+  "delimiter": ",",
+  "quoting": "CSV double-quoted fields; parsed with pandas' CSV parser",
+  "multiline_fields_preserved": true,
+  "record_count": 4693,
+  "column_count": 24,
+  "columns": [
+    "slug",
+    "name",
+    "description",
+    "ministry",
+    "department",
+    "state",
+    "category",
+    "beneficiary_type",
+    "benefits",
+    "eligibility_text",
+    "application_process",
+    "documents_required",
+    "apply_url",
+    "official_url",
+    "eligibility_age_min",
+    "eligibility_age_max",
+    "eligibility_gender",
+    "eligibility_caste",
+    "eligibility_income_max",
+    "eligibility_residence",
+    "eligibility_state",
+    "eligibility_disability",
+    "eligibility_bpl",
+    "scraped_at"
+  ],
+  "required_columns_missing": [],
+  "duplicate_name_rows": 1,
+  "duplicate_slug_rows": 0,
+  "state_counts": {
+    "Central": 684,
+    "Gujarat": 636,
+    "Uttarakhand": 440,
+    "Madhya Pradesh": 283,
+    "Goa": 269,
+    "Puducherry": 267,
+    "Haryana": 246,
+    "Tamil Nadu": 232,
+    "Rajasthan": 156,
+    "Bihar": 112,
+    "West Bengal": 110,
+    "Chhattisgarh": 106,
+    "Jharkhand": 95,
+    "Maharashtra": 83,
+    "Meghalaya": 83,
+    "Odisha": 82,
+    "Kerala": 81,
+    "Assam": 78,
+    "Himachal Pradesh": 68,
+    "Dadra & Nagar Haveli And Daman & Diu": 62,
+    "Karnataka": 56,
+    "Andhra Pradesh": 50,
+    "Delhi": 49,
+    "Uttar Pradesh": 46,
+    "Jammu And Kashmir": 42,
+    "Punjab": 40,
+    "Arunachal Pradesh": 38,
+    "Tripura": 37,
+    "Manipur": 27,
+    "Mizoram": 25,
+    "Sikkim": 22,
+    "Telangana": 20,
+    "Chandigarh": 20,
+    "Andaman and Nicobar Islands": 19,
+    "Nagaland": 16,
+    "Lakshadweep": 9,
+    "Ladakh": 4
+  },
+  "category_value_count": 279,
+  "coverage": {
+    "slug": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    },
+    "name": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    },
+    "description": {
+      "populated": 4689,
+      "missing": 4,
+      "coverage_percent": 99.91
+    },
+    "ministry": {
+      "populated": 681,
+      "missing": 4012,
+      "coverage_percent": 14.51
+    },
+    "department": {
+      "populated": 4400,
+      "missing": 293,
+      "coverage_percent": 93.76
+    },
+    "state": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    },
+    "category": {
+      "populated": 4689,
+      "missing": 4,
+      "coverage_percent": 99.91
+    },
+    "beneficiary_type": {
+      "populated": 4629,
+      "missing": 64,
+      "coverage_percent": 98.64
+    },
+    "benefits": {
+      "populated": 4689,
+      "missing": 4,
+      "coverage_percent": 99.91
+    },
+    "eligibility_text": {
+      "populated": 4689,
+      "missing": 4,
+      "coverage_percent": 99.91
+    },
+    "application_process": {
+      "populated": 4689,
+      "missing": 4,
+      "coverage_percent": 99.91
+    },
+    "documents_required": {
+      "populated": 4676,
+      "missing": 17,
+      "coverage_percent": 99.64
+    },
+    "apply_url": {
+      "populated": 4684,
+      "missing": 9,
+      "coverage_percent": 99.81
+    },
+    "official_url": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    },
+    "eligibility_age_min": {
+      "populated": 1053,
+      "missing": 3640,
+      "coverage_percent": 22.44
+    },
+    "eligibility_age_max": {
+      "populated": 785,
+      "missing": 3908,
+      "coverage_percent": 16.73
+    },
+    "eligibility_gender": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    },
+    "eligibility_caste": {
+      "populated": 719,
+      "missing": 3974,
+      "coverage_percent": 15.32
+    },
+    "eligibility_income_max": {
+      "populated": 779,
+      "missing": 3914,
+      "coverage_percent": 16.6
+    },
+    "eligibility_residence": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    },
+    "eligibility_state": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    },
+    "eligibility_disability": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    },
+    "eligibility_bpl": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    },
+    "scraped_at": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    }
+  },
+  "structured_eligibility_coverage": {
+    "eligibility_age_min": {
+      "populated": 1053,
+      "missing": 3640,
+      "coverage_percent": 22.44
+    },
+    "eligibility_age_max": {
+      "populated": 785,
+      "missing": 3908,
+      "coverage_percent": 16.73
+    },
+    "eligibility_income_max": {
+      "populated": 779,
+      "missing": 3914,
+      "coverage_percent": 16.6
+    },
+    "eligibility_gender": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    },
+    "eligibility_residence": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    },
+    "eligibility_state": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    },
+    "eligibility_disability": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    },
+    "eligibility_bpl": {
+      "populated": 4693,
+      "missing": 0,
+      "coverage_percent": 100.0
+    }
+  },
+  "valid_http_url_count": {
+    "apply_url": 4672,
+    "official_url": 4693
+  },
+  "limitations": [
+    "The source is a third-party dataset and records have not been independently checked against official sources.",
+    "Literal null-like strings are treated as missing; descriptive text and original source URLs are retained.",
+    "Natural-language eligibility prose is supporting context and is not converted into unverified deterministic rules."
+  ]
+}
